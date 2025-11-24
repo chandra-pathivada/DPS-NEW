@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using DocumentProcessor.Core.Entities;
@@ -7,6 +7,11 @@ namespace DocumentProcessor.Infrastructure.Data
 {
     public class ApplicationDbContext : DbContext
     {
+        static ApplicationDbContext()
+        {
+            AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+        }
+
         public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
             : base(options)
         {
@@ -20,7 +25,7 @@ namespace DocumentProcessor.Infrastructure.Data
             modelBuilder.Entity<Document>(entity =>
             {
                 entity.HasKey(e => e.Id);
-                entity.ToTable("Documents");
+                entity.ToTable("documents", "dps_dbo");
 
                 entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
                 entity.Property(e => e.OriginalFileName).IsRequired().HasMaxLength(500);
@@ -39,6 +44,9 @@ namespace DocumentProcessor.Infrastructure.Data
                 entity.HasIndex(e => e.UploadedAt);
                 entity.HasIndex(e => e.IsDeleted);
                 entity.HasIndex(e => e.ProcessingStatus);
+
+                // Configure boolean to int conversion for PostgreSQL compatibility
+                entity.Property(e => e.IsDeleted).HasConversion<int>();
 
                 // Configure soft delete filter
                 entity.HasQueryFilter(e => !e.IsDeleted);

@@ -1,4 +1,4 @@
-using DocumentProcessor.Core.Interfaces;
+﻿using DocumentProcessor.Core.Interfaces;
 using DocumentProcessor.Infrastructure.AI;
 using DocumentProcessor.Infrastructure.BackgroundTasks;
 using DocumentProcessor.Infrastructure.Data;
@@ -41,7 +41,7 @@ public static class InfrastructureServiceCollectionExtensions
             connectionString = localConnectionString;
         }
 
-        services.AddDbContext<ApplicationDbContext>(options => options.UseSqlServer(connectionString));
+        services.AddDbContext<ApplicationDbContext>(options => options.UseNpgsql(connectionString));
 
         // Register repositories
         services.AddScoped<IDocumentRepository, DocumentRepository>();
@@ -143,15 +143,15 @@ public static class InfrastructureServiceCollectionExtensions
                 await context.Database.ExecuteSqlRawAsync(@"
                     CREATE VIEW vw_DocumentSummary AS
                     SELECT
-                        DocumentTypeName,
-                        Status,
+                        documenttypename,
+                        status,
                         COUNT(*) AS DocumentCount,
-                        AVG(DATEDIFF(SECOND, UploadedAt, COALESCE(ProcessedAt, GETUTCDATE()))) AS AvgProcessingTimeSeconds,
-                        MIN(UploadedAt) AS FirstUploadedAt,
-                        MAX(UploadedAt) AS LastUploadedAt
-                    FROM Documents
-                    WHERE IsDeleted = 0
-                    GROUP BY DocumentTypeName, Status
+                        AVG(DATEDIFF(SECOND, uploadedat, COALESCE(processedat, GETUTCDATE()))) AS AvgProcessingTimeSeconds,
+                        MIN(uploadedat) AS FirstUploadedAt,
+                        MAX(uploadedat) AS LastUploadedAt
+                    FROM dps_dbo.documents
+                    WHERE isdeleted = 0
+                    GROUP BY documenttypename, status
                 ");
                 logger.LogInformation("Created view: vw_DocumentSummary");
 
@@ -167,26 +167,26 @@ public static class InfrastructureServiceCollectionExtensions
                         SET NOCOUNT ON;
 
                         SELECT
-                            Id,
-                            FileName,
-                            FileExtension,
-                            StoragePath,
-                            FileSize,
-                            DocumentTypeName,
-                            DocumentTypeCategory,
-                            Status,
-                            ProcessingStatus,
-                            Summary,
-                            UploadedAt,
-                            ProcessedAt,
-                            ProcessingStartedAt,
-                            ProcessingCompletedAt
-                        FROM Documents
-                        WHERE IsDeleted = 0
-                            AND UploadedAt >= DATEADD(DAY, -@Days, GETUTCDATE())
-                            AND (@Status IS NULL OR Status = @Status)
-                            AND (@DocumentTypeName IS NULL OR DocumentTypeName = @DocumentTypeName)
-                        ORDER BY UploadedAt DESC
+                            id,
+                            filename,
+                            fileextension,
+                            storagepath,
+                            filesize,
+                            documenttypename,
+                            documenttypecategory,
+                            status,
+                            processingstatus,
+                            summary,
+                            uploadedat,
+                            processedat,
+                            processingstartedat,
+                            processingcompletedat
+                        FROM dps_dbo.documents
+                        WHERE isdeleted = 0
+                            AND uploadedat >= DATEADD(DAY, -@Days, GETUTCDATE())
+                            AND (@Status IS NULL OR status = @Status)
+                            AND (@DocumentTypeName IS NULL OR documenttypename = @DocumentTypeName)
+                        ORDER BY uploadedat DESC
                     END
                 ");
                 logger.LogInformation("Created stored procedure: sp_GetRecentDocuments");
@@ -214,7 +214,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         try
         {
-            secretJson = await secretsService.GetSecretAsync("atx-db-modernization-atx-db-modernization-1-target");
+            secretJson = await secretsService.GetSecretAsync("arn:aws:secretsmanager:us-east-1:183295430358:secret:atx-db-modernization-atx-db-modernization-1-target-GJexuZ");
             if (!string.IsNullOrWhiteSpace(secretJson))
             {
                 var username = secretsService.GetFieldFromSecret(secretJson, "username");
@@ -237,9 +237,9 @@ public static class InfrastructureServiceCollectionExtensions
             var password = secretsService.GetFieldFromSecret(secretJson, "password");
             var host = secretsService.GetFieldFromSecret(secretJson, "host");
             var port = secretsService.GetFieldFromSecret(secretJson, "port");
-            var dbname = secretsService.GetFieldFromSecret(secretJson, "dbname");
+            var dbname = "postgres";
 
-            return $"Server={host},{port};Database={dbname};User Id={username};Password={password};TrustServerCertificate=true;Encrypt=true";
+            return $"Host={host};Port={port};Database={dbname};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true";
         }
 
         throw new InvalidOperationException("Failed to retrieve database credentials from Secrets Manager.");
