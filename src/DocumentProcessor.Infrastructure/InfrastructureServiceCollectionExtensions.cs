@@ -146,11 +146,11 @@ public static class InfrastructureServiceCollectionExtensions
                         documenttypename,
                         status,
                         COUNT(*) AS DocumentCount,
-                        AVG(DATEDIFF(SECOND, uploadedat, COALESCE(processedat, GETUTCDATE()))) AS AvgProcessingTimeSeconds,
+                        AVG(EXTRACT(EPOCH FROM (COALESCE(processedat, NOW() AT TIME ZONE 'UTC') - uploadedat))) AS AvgProcessingTimeSeconds,
                         MIN(uploadedat) AS FirstUploadedAt,
                         MAX(uploadedat) AS LastUploadedAt
                     FROM dps_dbo.documents
-                    WHERE isdeleted = 0
+                    WHERE isdeleted = false
                     GROUP BY documenttypename, status
                 ");
                 logger.LogInformation("Created view: vw_DocumentSummary");
@@ -158,14 +158,29 @@ public static class InfrastructureServiceCollectionExtensions
                 // Create stored procedure for getting recent documents
                 logger.LogInformation("Creating stored procedure: sp_GetRecentDocuments");
                 await context.Database.ExecuteSqlRawAsync(@"
-                    CREATE PROCEDURE sp_GetRecentDocuments
-                        @Days INT = 7,
-                        @Status INT = NULL,
-                        @DocumentTypeName NVARCHAR(200) = NULL
-                    AS
-                    BEGIN
-                        SET NOCOUNT ON;
-
+                    CREATE OR REPLACE FUNCTION sp_GetRecentDocuments(
+                        p_days INT DEFAULT 7,
+                        p_status INT DEFAULT NULL,
+                        p_document_type_name VARCHAR(200) DEFAULT NULL
+                    )
+                    RETURNS TABLE (
+                        id UUID,
+                        filename VARCHAR,
+                        fileextension VARCHAR,
+                        storagepath VARCHAR,
+                        filesize BIGINT,
+                        documenttypename VARCHAR,
+                        documenttypecategory VARCHAR,
+                        status INT,
+                        processingstatus INT,
+                        summary TEXT,
+                        uploadedat TIMESTAMP,
+                        processedat TIMESTAMP,
+                        processingstartedat TIMESTAMP,
+                        processingcompletedat TIMESTAMP
+                    )
+                    LANGUAGE sql
+                    AS $$
                         SELECT
                             id,
                             filename,
@@ -182,12 +197,12 @@ public static class InfrastructureServiceCollectionExtensions
                             processingstartedat,
                             processingcompletedat
                         FROM dps_dbo.documents
-                        WHERE isdeleted = 0
-                            AND uploadedat >= DATEADD(DAY, -@Days, GETUTCDATE())
-                            AND (@Status IS NULL OR status = @Status)
-                            AND (@DocumentTypeName IS NULL OR documenttypename = @DocumentTypeName)
+                        WHERE isdeleted = false
+                            AND uploadedat >= (NOW() AT TIME ZONE 'UTC') - (p_days || ' days')::INTERVAL
+                            AND (p_status IS NULL OR status = p_status)
+                            AND (p_document_type_name IS NULL OR documenttypename = p_document_type_name)
                         ORDER BY uploadedat DESC
-                    END
+                    $$
                 ");
                 logger.LogInformation("Created stored procedure: sp_GetRecentDocuments");
             }
@@ -214,7 +229,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         try
         {
-            secretJson = await secretsService.GetSecretAsync("arn:aws:secretsmanager:us-east-1:183295430358:secret:atx-db-modernization-atx-db-modernization-1-target-GJexuZ");
+            secretJson = await secretsService.GetSecretAsync("atx-db-modernization-atx-db-modernization-1-target");
             if (!string.IsNullOrWhiteSpace(secretJson))
             {
                 var username = secretsService.GetFieldFromSecret(secretJson, "username");
@@ -237,9 +252,9 @@ public static class InfrastructureServiceCollectionExtensions
             var password = secretsService.GetFieldFromSecret(secretJson, "password");
             var host = secretsService.GetFieldFromSecret(secretJson, "host");
             var port = secretsService.GetFieldFromSecret(secretJson, "port");
-            var dbname = "postgres";
+            var dbname = secretsService.GetFieldFromSecret(secretJson, "dbname");
 
-            return $"Host={host};Port={port};Database={dbname};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true";
+            return $"Server={host},{port};Database={dbname};User Id={username};Password={password};TrustServerCertificate=true;Encrypt=true";
         }
 
         throw new InvalidOperationException("Failed to retrieve database credentials from Secrets Manager.");
